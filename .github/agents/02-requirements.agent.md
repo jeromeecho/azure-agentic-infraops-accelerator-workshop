@@ -1,6 +1,6 @@
 ---
 name: 02-Requirements
-model: ["GPT-5.5"]
+model: ["Claude Sonnet 4.6"]
 description: Researches and captures Azure platform engineering project requirements
 argument-hint: Describe the Azure workload or project you want to gather requirements for
 user-invocable: true
@@ -34,6 +34,44 @@ handoffs:
 ---
 
 # Requirements Agent
+
+<context_awareness>
+This is a ONE-SHOT Step 1 agent (per `claude-oneshot-001`): complete every
+phase — discovery → artifact → challenger → Gate 1 — in a single turn. The
+bounded contract is the grounding mechanism; do not preface work with an
+investigate-before-answering block (that pattern is reserved for research
+agents and conflicts with the one-shot contract).
+
+Before Phase 1 questioning, the only read permitted is one `apex-recall show
+<project> --json` (or `init` when no session exists). Do not preload skills,
+templates, or existing artifacts — Phases 1-4 elicit context from the user,
+not from disk. Skill loads (`azure-artifacts`, `azure-defaults`) happen at
+Phase 5 (artifact generation), not earlier. See
+[`agent-operating-frame.instructions.md`](../instructions/agent-operating-frame.instructions.md).
+</context_awareness>
+
+<output_contract>
+Produce in `agent-output/{project}/`:
+
+- `01-requirements.md` — H2 structure matches the azure-artifacts
+  `01-requirements-template.md` exactly.
+- `README.md` — rendered from the project README template.
+- `sku-manifest.json` + `sku-manifest.md` at rev 1 (every entry
+  `source: "user-pin"`, `source_step: "1"`, `last_modified_rev: 1`). An
+  empty `services[]` is valid only when Phase 3j recorded an explicit
+  "no preference" for every applicable class.
+- `challenge-findings-requirements.json` from `challenger-review-subagent`.
+- `challenge-findings-requirements-decisions.json` when accept/defer
+  decisions are recorded.
+
+Session-state side effects (via `apex-recall`, never direct JSON edits):
+checkpoints `phase_1_discovery` → `phase_6_challenger`, decisions for
+`iac_tool`, `region`, `sku_manifest_status`, `sku_manifest_revision`,
+`sku_preferences_captured`, and Step 1 completion.
+
+Chat output: progress notes, a challenger findings table (ID, severity,
+title, WAF pillar, recommendation), and the Gate 1 proceed/revise prompt.
+</output_contract>
 
 # Goal
 
@@ -334,6 +372,29 @@ Then:
 5. Run the targeted artifact checks used by the repo, including template linting when available.
 6. Record mandatory decisions: `iac_tool`, region, SKU manifest status, and SKU manifest revision.
 7. Checkpoint `phase_5_artifact`.
+8. **Immediately chain into Phase 6a in the same turn.** The next tool
+   call after `apex-recall checkpoint ... phase_5_artifact` MUST be
+   `runSubagent('challenger-review-subagent', ...)` with the inputs in
+   Phase 6a. Do not emit any user-facing summary, "ready for review"
+   note, or final assistant message between Phase 5 and Phase 6a.
+
+## Auto-Trigger Blocker (between Phase 5 and Phase 6)
+
+This block is a hard stop rule, not a recap.
+
+- If `01-requirements.md` has just been written and
+  `challenge-findings-requirements.json` does **not** yet exist, your
+  next action in this turn MUST be the Phase 6a `runSubagent` call.
+- You MAY NOT end the turn, hand off, render a final summary, or call
+  `apex-recall complete-step` until `challenge-findings-requirements.json`
+  exists. `apex-recall complete-step` will refuse with exit code 2 in
+  that state; do not work around it.
+- "I'll run the challenger review next" is not a substitute for actually
+  invoking it. The very next tool invocation is the subagent call.
+- The only legal reason to defer Phase 6 is a verbatim subagent error
+  from the runtime, in which case you follow the fallback rule in
+  Phase 6a (retry once via `10-Challenger`, then surface the error and
+  stop).
 
 ## Phase 6: Challenger Review and Per-Finding Decision Panel
 
@@ -352,6 +413,13 @@ Delegate to `challenger-review-subagent` with:
 - `output_path`: `agent-output/{project}/challenge-findings-requirements.json`
 - `overwrite`: `false`, except when re-running after revisions
 
+Compose the runtime `prompt` string per
+[tools/apex-prompts/utility-prompts/execution-subagent.prompt.md](../../tools/apex-prompts/utility-prompts/execution-subagent.prompt.md)
+— the three required H2s are `## Inputs`, `## Activities`,
+`## Outputs`. Do NOT use ad-hoc structures
+(`**Inputs:** / **Review scope:** / **Output format:**`); the template is
+the source of truth (issue #425).
+
 After the subagent returns, checkpoint `phase_6_challenger`.
 
 **Fallback rule (mandatory)**: if `runSubagent` returns
@@ -369,9 +437,26 @@ Do not produce a fabricated findings file under any circumstance.
 
 ### 6b. Render findings table
 
-Render every finding in chat with columns: ID, Severity, Title, WAF Pillar, Recommendation.
-Show totals for must-fix, should-fix, and suggestion findings. Reference the JSON path for the
-machine-readable detail.
+Print a **multi-line markdown table** in chat — each finding on its
+own row, with blank lines before and after the table so it renders
+correctly. Use this exact layout (do NOT collapse into a single line
+or use escaped `\n` characters):
+
+```markdown
+**Challenger Findings**
+
+| ID | Severity | Title | WAF Pillar | Recommendation |
+| --- | --- | --- | --- | --- |
+| 0f47a77c | must_fix | Example title | Security | Example recommendation |
+| 5c077877 | should_fix | Another title | Cost Optimization | Another recommendation |
+
+**Totals:** 1 must-fix, 1 should-fix, 0 suggestions.
+Machine-readable detail is in `challenge-findings-requirements.json`.
+```
+
+Column values come from the JSON `findings[]` array fields: `category`
+→ ID (first 8 hex of the sha256 hash), `severity`, `title`,
+`waf_pillar`, `recommendation`.
 
 ### 6c. Per-finding decision panel
 

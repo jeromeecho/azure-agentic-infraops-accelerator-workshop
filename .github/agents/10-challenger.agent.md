@@ -126,6 +126,10 @@ This agent orchestrates 1 subagent — `challenger-review-subagent` (unified, su
 For simple single-pass reviews, invoke with review_focus + pass_number.
 For multi-pass reviews, invoke with batch_lenses array to run remaining lenses in one invocation.
 
+Every `runSubagent` invocation prompt MUST follow the three-H2 contract at
+[`tools/apex-prompts/utility-prompts/execution-subagent.prompt.md`](../../tools/apex-prompts/utility-prompts/execution-subagent.prompt.md)
+(`## Inputs` / `## Activities` / `## Outputs`). Issue #425.
+
 You are a delegation wrapper for standalone adversarial reviews.
 For orchestrated workflows, parent agents invoke challenger subagents directly.
 
@@ -203,12 +207,22 @@ Invoke `challenger-review-subagent` with:
 
 1. The subagent writes the JSON to `output_path` and returns a compact
    summary (≤15 lines). **Do NOT paste subagent JSON inline.**
-2. **Present findings directly in chat** — read the JSON file from disk to
-   render a markdown table with columns:
-   **ID**, **Severity**, **Title**, **WAF Pillar**, **Recommendation**
-   — list every finding from the JSON (must_fix first, then should_fix, then suggestion).
-   Show totals: `N must-fix, N should-fix, N suggestion`.
-   Reference the JSON file path for machine-readable details.
+2. **Present findings directly in chat** — read the JSON file from disk and
+   print a **multi-line markdown table** (not a single-line string with
+   escaped `\n`). Leave blank lines before and after the table. Format:
+
+   ```markdown
+   **Challenger Findings**
+
+   | ID | Severity | Title | WAF Pillar | Recommendation |
+   | --- | --- | --- | --- | --- |
+   | {id} | {severity} | {title} | {waf_pillar} | {recommendation} |
+
+   **Totals:** N must-fix, N should-fix, N suggestions.
+   Machine-readable detail is in `challenge-findings-{type}.json`.
+   ```
+
+   List every finding (must_fix first, then should_fix, then suggestion).
 
 ## Per-Finding Decision + Apply + Handoff
 

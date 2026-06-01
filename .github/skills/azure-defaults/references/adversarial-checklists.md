@@ -118,6 +118,23 @@ For **every** artifact, ask:
 - [ ] Is there a rollback strategy if deployment fails mid-way?
 - [ ] Are phase boundaries correctly placed for phased deployments?
 - [ ] Are deprecation signals present in the preview output?
+- [ ] **Approval block present and populated** (issue #425): five-line
+      block with `creates`/`modifies`/`deletes`, `destructive`,
+      `deploy_gate`, `cost_delta` vs envelope, and a `decision:` gate.
+      Persisted to `06-deploy-approval.json` conforming to
+      `deployment-preview-v1`.
+- [ ] **Retry loop bounded ≤3 with named escalation options** (issue #425):
+      every retry path (governance, what-if/plan, validate, deploy) caps
+      at 3 attempts and escalates with `proceed-with-substitute` /
+      `change-region` / `abort`. Flag unbounded loops as `must_fix`.
+- [ ] **Step boundaries use `apex-recall transition`** (issue #425,
+      post-merge audit): when a workflow run hands off between steps
+      AND records decisions at the same boundary, the agent invoked
+      `apex-recall transition` (single atomic write). A chained
+      `decide && checkpoint && complete-step` at a boundary is a
+      `should_fix` — those are separate writes and can drift on crash.
+      Standalone `complete-step` (no decisions, no next-step start)
+      remains valid.
 
 ---
 
@@ -176,6 +193,37 @@ Merged from `security-governance` + `architecture-reliability` +
 - [ ] **Private-endpoint subnet sizing** — PE subnet has at least one
       free IP per resource currently planned PLUS headroom for the next
       6 months (typical recommendation: ≥ /27).
+- [ ] **D-V1 VNet trigger honored** — when the trigger contract holds
+      (any `services[].requires[] ∈ {vnet-integration, private-endpoints}`
+      OR any `services[].service_name` in the vnet-attached whitelist
+      in [`vnet-planning.md`](vnet-planning.md)), the plan emits a
+      VNet resource OR references an existing one via `existing_vnet_id`
+      with a verified live address space.
+- [ ] **D-V2 Address space valid** — `vnet_address_space` is at least
+      `/22`; subnet CIDRs are non-overlapping and all inside
+      `vnet_address_space`; **5 Azure-reserved IPs** accounted for per
+      subnet (network, default gateway, two DNS, broadcast).
+- [ ] **D-V3 Subnet sizing per SKU** — every subnet meets the per-SKU
+      (min, recommended) row in
+      [`vnet-planning.md`](vnet-planning.md#subnet-sizing-matrix).
+      Specifically: App Gateway v2 ≥ `/26`, APIM stv2 ≥ `/28` (single) /
+      `/27` (multi), AKS Azure CNI Overlay ≥ formula result, PE ≥ `/29`,
+      App Service VNet integration ≥ `/28`, Bastion ≥ `/26` (any SKU),
+      Firewall `/26`, Gateway ≥ `/27`.
+- [ ] **D-V4 Reserved subnet names** — `AzureBastionSubnet` /
+      `AzureFirewallSubnet` / `GatewaySubnet` / `RouteServerSubnet`
+      only emitted when the respective resource is in scope; names use
+      exact case-sensitive form.
+- [ ] **D-V5 Governance precedence honored** — when
+      `04-governance-constraints.json` `network_constraints` declares
+      allowed address ranges, required subnet names, mandatory
+      NSG/UDR, or no-public-IP, every plan element conforms; conflicts
+      surface as `must_fix` reconciliation findings from
+      04g-Governance.
+- [ ] **D-V6 Deprecated services flagged** — if `subnet_plan` infers
+      AKS kubenet (or any service in
+      [`deprecated-services.md`](deprecated-services.md)), a
+      `should_fix` finding is emitted with the retirement date.
 - [ ] **Public-network access** — all data services have
       `publicNetworkAccess = Disabled` for prod; any exception is
       called out with rationale.
